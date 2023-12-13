@@ -1,0 +1,338 @@
+---
+title: '**Analyzing Plant Phenology Along the Santa Clara River using Landsat Imagery**'
+author: "Yifei Liu"
+date: '2023-11-22'
+output:
+  html_document: default
+---
+
+# Background
+Phenology is the timing of life history events. Important phenological events for plants involve the growth of leaves, flowering, and senescence (death of leaves). Plants species adapt the timing of these events to local climate conditions to ensure successful reproduction. Subsequently, animal species often adapt their phenology to take advantage of food availability. As the climate shifts this synchronization is being thrown out of whack. Shifts in phenology are therefore a common yardstick of understanding how and if ecosystems are adjusting to climate change.\
+
+Plant species may employ the following phenological strategies:\
+
+-   **Winter deciduous**: lose leaves in the winter, grow new leaves in the spring\
+-   **Drought deciduous**: lose leaves in the summer when water is limited\
+-   **Evergreen**: maintain leaves yearround\
+
+**Credit**: this lab is based on a materials developed by Chris Kibler.
+
+## Project Description
+The timing of life history events in plants, known as phenology, is vital for understanding ecosystem responses to climate change. This project focuses on analyzing plant phenology near the Santa Clara River which flows from Santa Clarita to Ventura. We aim to investigate the phenological patterns of different plant communities, including riparian forests, grasslands, and chaparral shrublands, through a time series of Landsat imagery and polygons identifying the locations of study sites within each plant community.
+
+## Skills Demonstrated
+
+- **Remote Sensing Analysis**: Utilizing Landsat imagery to assess vegetation dynamics over time.
+- **Time-Series Analysis**: Analyzed temporal patterns in Normalized Difference Vegetation Index (NDVI) calculations to quantify vegetation productivity across different ecological zones.
+- **Spatial Data Handling**: Proficient use of `sf` and `terra` packages in R for managing and analyzing spatial data.
+- **Data Processing and Wrangling**: Employing `dplyr` and other `tidyverse` packages for efficient data manipulation and preparation.
+- **Visualization**: Creating informative visualizations using `tmap` and `ggplot2` to effectively communicate the results of the analysis.
+- **Interdisciplinary Knowledge Application**: Integrated principles of phenology, ecology, and remote sensing to address environmental questions.
+
+## Material and Methods
+### Data
+#### Landsat Operational Land Imager (OLI sensor)
+
+- Eight pre-processed scenes from 2018 to 2019.
+- Level 2 surface reflectance products with spectral bands 2-7.
+- Scenes processed to set erroneous values to NA and scale factors set to 100.
+
+#### Study sites
+
+- Polygons representing various plant communities
+  +  riparian forests: grow along the river, dominated by winter deciduous cottonwood and willow trees
+  + grasslands: grow in openspaces, dominated by drought deciduous grasses
+  + chaparral shrublands: grow in more arid habitats, dominated by evergreen shrubs
+  
+### Methodology
+1. **Converting Spectral Reflectance to NDVI**: Transforming spectral reflectance data from Landsat imagery into Normalized Difference Vegetation Index (NDVI) to measure vegetation productivity.
+2. **Annual NDVI Calculation**: Computing NDVI for multiple time points throughout the year to capture seasonal variations in vegetation.
+3. **NDVI Summary within Vegetation Communities**: Aggregating NDVI values for different vegetation communities to understand distinct phenological patterns.
+4. **Visualization of NDVI Variations**: Creating graphical representations to illustrate temporal changes in NDVI across various vegetation types.
+
+
+## Analysis Workflow
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, include = TRUE)
+```
+
+### Initial Setup
+#### Load Essential Libraries
+This step involves loading R libraries essential for processing and analyzing spatial data, creating visualizations, and handling general data operations.
+```{r initial-setup, include=TRUE, message=FALSE, warning=FALSE}
+# Loading libraries
+library(terra)
+library(sf)
+library(dplyr)
+library(tidyr)
+library(stringr)
+library(ggplot2)
+library(here)
+library(tmap)
+library(cowplot)
+```
+
+#### Setting Working Directory
+In this section, we will set the working directory to the folder that holds the data for this project. It's important to note that file paths may vary depending on the user's directory structure.
+
+```{r set-working-directory, include=TRUE, message=FALSE, warning=FALSE}
+# Clearing workspace
+rm(list = ls())
+
+# Setting the working directory
+here::i_am("Santa_Clara_River_Phenology_Analysis.Rmd")
+setwd(here())
+```
+
+### NDVI Function Creation
+We start by defining a function to compute the Normalized Difference Vegetation Index (NDVI). NDVI is a crucial indicator in remote sensing for assessing vegetation health and productivity. It is calculated using the difference and sum of the near-infrared (NIR) and red spectral bands.
+
+```{r ndvi-function}
+# Define a function to calculate NDVI
+ndvi_fun = function(nir, red){
+  (nir - red) / (nir + red)
+}
+```
+
+### Computing NDVI for a Single Scene
+We have 8 scenes collected by the Landsat OLI sensor on 8 different days throughout the year. We begin our analysis with the first scene collected on June 12, 2018
+```{r ndvi-single-scene}
+# Load the Landsat scene for June 12, 2018
+landsat_20180612 <-rast(here("data", "landsat_20180612.tif"))
+# check information
+landsat_20180612
+```
+
+Then we update the names of the layers to match the corresponding spectral bands. This step is critical for accurate NDVI computation.
+
+```{r rename-raster}
+# Rename raster layers to reflect corresponding spectral bands
+names(landsat_20180612) <- c("blue", "green", "red", "NIR", "SWIR1", "SWIR2")
+# check information
+landsat_20180612
+```
+
+Finally, we apply the NDVI function we created to compute NDVI for this Landsat scene using the `lapp()` function. The `lapp()` function is designed to apply a specific function to each cell using layers as arguments. Therefore, we need to tell `lapp()` which layers (or bands) to pass into the function. 
+
+The NIR band is the 4th layer and the red band is the 3rd layer in our raster. In this case, because we defined the NIR band as the first argument and the red band as the second argument in our function, we tell `lapp()` to use the 4th layer first and 3rd layer second. 
+```{r compute-ndvi-scene}
+# Compute NDVI for the Landsat scene
+ndvi_20180612 <- lapp(landsat_20180612[[c(4, 3)]], fun = ndvi_fun)
+# check information
+ndvi_20180612
+```
+
+This NDVI computation provides a snapshot of vegetation health and productivity for the specific date, forming the basis for a more comprehensive time-series analysis across multiple dates.
+
+### Computing NDVI for Multiple Scenes - Attempt 1
+
+Now we want to repeat the same operations for all 8 scenes. Below is a possible solution, but it's pretty clunky.
+
+#### Loading and Renaming Layers for Each Scene
+```{r load-rename-attempt 1}
+landsat_20180612 <-rast(here("data","landsat_20180612.tif"))
+landsat_20180815 <- rast(here("data","landsat_20180815.tif"))
+landsat_20181018 <- rast(here("data","landsat_20181018.tif"))
+landsat_20181103 <- rast(here("data","landsat_20181103.tif"))
+landsat_20190122 <- rast(here("data", "landsat_20190122.tif"))
+landsat_20190223 <- rast(here("data", "landsat_20190223.tif"))
+landsat_20190412 <- rast(here("data", "landsat_20190412.tif"))
+landsat_20190701 <- rast(here("data", "landsat_20190701.tif"))
+
+names(landsat_20180612) <- c("blue", "green", "red", "NIR", "SWIR1", "SWIR2")
+names(landsat_20180815) <- c("blue", "green", "red", "NIR", "SWIR1", "SWIR2")
+names(landsat_20181018) <- c("blue", "green", "red", "NIR", "SWIR1", "SWIR2")
+names(landsat_20181103) <- c("blue", "green", "red", "NIR", "SWIR1", "SWIR2")
+names(landsat_20190122) <- c("blue", "green", "red", "NIR", "SWIR1", "SWIR2")
+names(landsat_20190223) <- c("blue", "green", "red", "NIR", "SWIR1", "SWIR2")
+names(landsat_20190412) <- c("blue", "green", "red", "NIR", "SWIR1", "SWIR2")
+names(landsat_20190701) <- c("blue", "green", "red", "NIR", "SWIR1", "SWIR2")
+```
+
+#### Computing NDVI for Each Scene
+After loading and renaming the layers, we compute NDVI for each scene. 
+```{r compute-ndvi-attempt1, include=TRUE}
+# Compute NDVI for each scene
+ndvi_20180612 <- lapp(landsat_20180612[[c(4, 3)]], fun = ndvi_fun)
+ndvi_20180815 <- lapp(landsat_20180815[[c(4, 3)]], fun = ndvi_fun)
+ndvi_20181018 <- lapp(landsat_20181018[[c(4, 3)]], fun = ndvi_fun)
+ndvi_20181103 <- lapp(landsat_20181103[[c(4, 3)]], fun = ndvi_fun)
+ndvi_20190122 <- lapp(landsat_20190122[[c(4, 3)]], fun = ndvi_fun)
+ndvi_20190223 <- lapp(landsat_20190223[[c(4, 3)]], fun = ndvi_fun)
+ndvi_20190412 <- lapp(landsat_20190412[[c(4, 3)]], fun = ndvi_fun)
+ndvi_20190701 <- lapp(landsat_20190701[[c(4, 3)]], fun = ndvi_fun)
+```
+
+#### Combining NDVI Layers
+Following NDVI computation for each scene, we combine these layers into a single raster stack. This stack allows us to analyze changes in vegetation health over time.
+```{r combine-attempt1, include=TRUE}
+# Combine NDVI layers into a single raster stack
+all_ndvi <- c(ndvi_20180612,
+              ndvi_20180815,
+              ndvi_20181018,
+              ndvi_20181103,
+              ndvi_20190122,
+              ndvi_20190223,
+              ndvi_20190412,
+              ndvi_20190701)
+```
+We also update the names of each layer to match the date of each image. 
+```{r update-name-attempt1, include=TRUE}
+# Update layer names to match the date of each image
+names(all_ndvi) <- c("2018-06-12",
+                     "2018-08-15",
+                     "2018-10-18",
+                     "2018-11-03",
+                     "2019-01-22",
+                     "2019-02-23",
+                     "2019-04-12",
+                     "2019-07-01")
+```
+
+### Computing NDVI for Multiple Scenes - Attempt 2
+
+The first attempt was pretty clunky and required a lot of copy/pasting. In this improved approach, we aim to streamline the NDVI computation process by utilizing custom functions. This method reduces repetitive coding and enhances the efficiency of our workflow.
+
+#### Clearing Environment and Redefining NDVI Function
+We start fresh by clearing the current R environment and redefining our NDVI computation function. This ensures a clean workspace and a consistent method for NDVI calculation.
+```{r restart-ndvi, message=FALSE, warning=FALSE}
+# Clearing workspace
+rm(list = ls())
+here::i_am("Santa_Clara_River_Phenology_Analysis.Rmd")
+
+# Redefining NDVI function
+ndvi_fun = function(nir, red){
+  (nir - red) / (nir + red)
+}
+```
+
+#### Outlining the Function
+Before diving into coding, we outline the operations required for NDVI computation. This step helps us understand the structure and inputs needed for our custom function.
+```{r outline-function, eval=FALSE}
+
+# note: this code is not meant to run! we're just outlining the function we want to create
+
+create_ndvi_layer <- function(){
+  landsat <- rast(file) # read in scene
+  names(landsat) <- c("blue", "green", "red", "NIR", "SWIR1", "SWIR2") # rename layers
+  ndvi <- lapp(landsat[[c(4, 3)]], fun = ndvi_fun) # compute NDVI
+}
+
+```
+
+#### Creating a List of Scene Files
+We generate a list of Landsat scene files from our data directory. This list will be used to iterate over each scene for NDVI computation.
+
+We're asking for the names of all the files in the data folder. The `pattern` option returns names that end in .tif (the file extension for the landsat scences). The `full.names` option returns the full file path for each scene.
+
+```{r create-list-files}
+# Generating a list of scene files
+files <- list.files(here("data"), pattern = "*.tif", full.names = TRUE)
+
+# Printing file names
+files
+
+```
+
+#### Refining the Custom Function
+We update our custom function to work with the list of scene file names. This function will now handle loading, renaming, and computing NDVI for each scene based on its index in the list.
+```{r updating-function}
+# Refining the custom NDVI function
+create_ndvi_layer <- function(i){
+  landsat <- rast(files[i])
+  names(landsat) <- c("blue", "green", "red", "NIR", "SWIR1", "SWIR2")
+  ndvi <- lapp(landsat[[c(4, 3)]], fun = ndvi_fun)
+}
+
+# Testing the function with the first file
+test_ndvi <- create_ndvi_layer(1)
+
+```
+
+#### Applying the Function to All Scenes
+Finally, we apply our custom function to each scene in the list and combine the results into a single raster stack. This stack represents NDVI values for all scenes, facilitating a comprehensive analysis of vegetation health over time.
+```{r apply-all-scenes}
+# Creating NDVI layer for each scene (day) and stack into a single rasterstack
+all_ndvi <- c(create_ndvi_layer(1),
+              create_ndvi_layer(2),
+              create_ndvi_layer(3),
+              create_ndvi_layer(4),
+              create_ndvi_layer(5),
+              create_ndvi_layer(6),
+              create_ndvi_layer(7),
+              create_ndvi_layer(8))
+
+# Updating layer names to match date
+names(all_ndvi) <- c("2018-06-12",
+                     "2018-08-15",
+                     "2018-10-18",
+                     "2018-11-03",
+                     "2019-01-22",
+                     "2019-02-23",
+                     "2019-04-12",
+                     "2019-07-01")
+```
+
+This refined method demonstrates an efficient way to handle NDVI computation across multiple satellite scenes, setting the stage for in-depth phenological analysis.
+
+### Comparing NDVI Across Vegetation Communities
+
+Now that we have computed NDVI for each of our scenes (days) we want to compare changes in NDVI values across different vegetation communities.
+
+#### Loading and Visualizing Study Site
+First, we'll read in a shapefile of study sites to understand the spatial distribution of various vegetation communities.
+```{r read-in-study-site, include=TRUE, message=FALSE, warning=FALSE}
+# Reading and visualizing study sites
+sites <- st_read(here("data", "study_sites.shp"), quiet = TRUE)
+
+# Plotting study sites on a single NDVI layer
+tm_shape(all_ndvi[[1]]) +
+  tm_raster() +
+  tm_shape(sites) +
+  tm_polygons()
+```
+
+#### Extracting NDVI Values at Study Sites
+Next, we extract the average NDVI values for each study site to analyze the vegetation health across different communities.. The output of extract is a data frame with rows that match the study site dataset, so we bind the results to the original dataset. 
+```{r extract-ndvi-sites, include=TRUE}
+# Extracting NDVI values
+sites_ndvi <- terra::extract(all_ndvi, sites, fun = "mean")
+
+# Combining the extracted values with site data
+sites_annotated <- cbind(sites, sites_ndvi)
+```
+
+#### Data Cleanup and Preparation
+After extraction, the data requires cleaning and restructuring for better analysis and visualization.
+We will 
+-   convert to data frame
+-   turn from wide to long format
+-   turn layer names into date format
+```{r data-cleanup, include=TRUE}
+# Cleaning and reformatting the data
+sites_clean <- sites_annotated %>%
+  st_drop_geometry() %>%
+  select(-ID) %>%
+  pivot_longer(!study_site) %>%
+  rename("NDVI" = value) %>%
+  mutate("year" = str_sub(name, 2, 5),
+         "month" = str_sub(name, 7, 8),
+         "day" = str_sub(name, -2, -1)) %>%
+  unite("date", 4:6, sep = "-") %>%
+  mutate("date" = lubridate::as_date(date))
+```
+
+#### Visualizing Phenological Trends
+Finally, we create visualizations to observe the seasonal changes in NDVI across the different vegetation types, highlighting the distinct phenological patterns.
+```{r include=TRUE}
+# Plotting phenological trends
+ggplot(sites_clean,
+       aes(x = date, y = NDVI,
+           group = study_site, col = study_site)) +
+  scale_color_manual(values = c("#EAAC8B", "#315C2B", "#315C2B", "#315C2B","#9EA93F")) +
+  geom_line() +
+  theme_minimal() +
+  labs(x = "", y = "Normalized Difference Vegetation Index (NDVI)", col = "Vegetation type",
+       title = "Seasonal Cycles of Vegetation Productivity") 
+```
+
